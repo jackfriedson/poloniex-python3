@@ -25,14 +25,24 @@ import hmac
 import json
 import time
 import sys
+import urllib
 
 import requests
-from configobj import ConfigObj
-from autobahn.asyncio.wamp import ApplicationSession, ApplicationRunner
+from autobahn.twisted.component import Component, run
+from requests.auth import AuthBase
 from ratelimiter import RateLimiter
+from twisted.internet.defer import inlineCallbacks
+from twisted.internet.ssl import CertificateOptions
+
+from src.utils import retry_on_status_code
 
 
-# from pprint import pprint as pp
+PUBLIC_TOPICS = ['returnTicker', 'return24Volume', 'returnOrderBook', 'returnTradeHistory',
+                 'returnChartData', 'returnCurrencies', 'returnLoanOrders']
+
+
+class PoloniexException(Exception):
+    pass
 
 
 class API:
@@ -51,21 +61,48 @@ class API:
     runner = None
     callback = None
 
-    class RunningAPI(ApplicationSession):
-        async def onJoin(self, details):
-            await self.subscribe(self.callback, self.topic)
+    class PoloniexAuth(AuthBase):
 
-    def __init__(self, config: ConfigObj or dict() = {}):
-        self.secrets = config
+        def __init__(self, apikey: str, secret: str):
+            self.apikey = apikey
+            self.secret = secret
+
+        def __call__(self, request):
+            signature = hmac.new(self.secret, request.body.encode(), hashlib.sha512).hexdigest()
+            request.headers['Key'] = self.apikey
+            request.headers['Sign'] = signature
+            return request
+
+    def __init__(self, apikey: str, secret: str):
+        self.auth = self.PoloniexAuth(apikey, secret)
         self.limiter = RateLimiter(max_calls=self.max_calls, period=self.max_period)
-        self.runner = ApplicationRunner(self.ws_uri, self.ws_realm)
 
     # WAMP Streaming API
 
     def subscribe(self, topic: str, callback: callable):
-        self.callback = callback
-        self.topic = topic
-        self.runner.run(API.RunningAPI())
+        self.wamp = Component(
+            realm='realm1',
+            transports=[{
+                'endpoint': {
+                    'type': 'tcp',
+                    'host': 'api.poloniex.com',
+                    'port': 443,
+                    'tls': CertificateOptions()
+                },
+                'type': 'websocket',
+                'url': 'wss://api.poloniex.com',
+                'options': {
+                    'open_handshake_timeout': 60.0
+                }
+            }]
+        )
+
+        @self.wamp.on_join
+        @inlineCallbacks
+        def join(session, details):
+            yield session.subscribe(callback, topic)
+
+        run(self.wamp)
 
     # Public HTTP API, no credentials needed.
 
@@ -78,7 +115,7 @@ class API:
     def returnOrderBook(self, currencyPair: str = 'BTC_NXT', depth: int = 10):
         return self._call(sys._getframe().f_code.co_name, locals())
 
-    def returnTradeHistory(self, currencyPair: str = 'BTC_NXT', start: int = 1410158341, end: int = 1410499372):
+    def returnTradeHistory(self, currencyPair: str = 'BTC_NXT', start: int = 1410158341, end: int = 9999999999):
         return self._call(sys._getframe().f_code.co_name, locals())
 
     def returnChartData(self, currencyPair: str = 'BTC_NXT', start: int = 1405699200, end: int = 9999999999, period: int = 14400):
@@ -173,23 +210,35 @@ class API:
     def toggleAutoRenew(self, orderNumber: int):
         return self._call(sys._getframe().f_code.co_name, locals())
 
-    def _call(self, topic: str, args: dict() = {}):
-        if topic in ['returnTicker', 'return24Volume', 'returnOrderBook', 'returnTradeHistory', 'returnChartData', 'returnCurrencies', 'returnLoanOrders']:
-            api = [self.public_url, 'get', topic]
-        else:
-            api = [self.private_url, 'post', topic, self.secrets]
+    def _call(self, topic: str, args: dict = {}):
+        args.pop('self', None)
 
-        def __call(api_details, uri):
-            request = getattr(requests, api_details[1])
-            headers = {}
-            del uri['self']
-            uri['command'] = api_details[2]
-            if api_details[2] == 'post':
-                uri['nonce'] = int(time.time() * 1000)
-                sign = hmac.new(api_details[3]['secret'], uri, hashlib.sha512).hexdigest()
-                headers['Sign'] = sign
-                headers['Key'] = api_details[3]['api_key']
-            return json.loads(request(api_details[0], uri, headers=headers).content.decode())
+        is_public = topic in PUBLIC_TOPICS
+        url = self.public_url if is_public else self.private_url
+        method = 'GET' if is_public else 'POST'
+
+        @retry_on_status_code([500, 502, 503, 504])
+        def __call(data):
+            data['command'] = topic
+            if is_public:
+                request_kwargs = {
+                    'params': data
+                }
+            else:
+                data['nonce'] = int(time.time() * 1000)
+                request_kwargs = {
+                    'auth': self.auth,
+                    'data': data
+                }
+
+            return requests.request(method, url, **request_kwargs)
 
         with self.limiter:
-            return __call(api, args)
+            resp =  __call(args)
+
+        resp_content = resp.json()
+        if 'error' in resp_content:
+            raise PoloniexException(resp_content.get('error'))
+        resp.raise_for_status()
+
+        return resp_content
