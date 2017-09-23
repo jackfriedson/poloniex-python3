@@ -34,7 +34,7 @@ from ratelimiter import RateLimiter
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.ssl import CertificateOptions
 
-from src.utils import retry_on_status_code
+from poloniex.utils import retry_on_status_code
 
 
 PUBLIC_TOPICS = ['returnTicker', 'return24Volume', 'returnOrderBook', 'returnTradeHistory',

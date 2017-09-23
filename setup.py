@@ -1,5 +1,5 @@
 from setuptools import setup
-from src import __author__, __email__, __version__, __license__
+from poloniex import __author__, __email__, __version__, __license__
 
 setup(
     name='Poloniex',
@@ -9,8 +9,8 @@ setup(
     author_email=__email__,
     url='https://github.com/a904guy/poloniex-python3',
     license=__license__,
-    packages=['src'],
-    package_dir={'Poloniex': 'src'},
+    packages=['poloniex'],
+    package_dir={'Poloniex': 'poloniex'},
     test_suite='tests',
     install_requires=['autobahn', 'configObj', 'requests', 'ratelimiter']
 )
