@@ -150,10 +150,10 @@ class API:
     def returnOrderTrades(self, orderNumber: int = None):
         return self._call(sys._getframe().f_code.co_name, locals())
 
-    def buy(self, rate: float, amount: float, currencyPair: str, fillOrKill: int, immediateOrCancel: int, postOnly: int):
+    def buy(self, rate: float, amount: float, currencyPair: str, fillOrKill: int = 0, immediateOrCancel: int = 0, postOnly: int = 0):
         return self._call(sys._getframe().f_code.co_name, locals())
 
-    def sell(self, rate: float, amount: float, currencyPair: str, fillOrKill: int, immediateOrCancel: int, postOnly: int):
+    def sell(self, rate: float, amount: float, currencyPair: str, fillOrKill: int = 0, immediateOrCancel: int = 0, postOnly: int = 0):
         return self._call(sys._getframe().f_code.co_name, locals())
 
     def cancelOrder(self, orderNumber: int):
@@ -234,7 +234,7 @@ class API:
             return requests.request(method, url, **request_kwargs)
 
         with self.limiter:
-            resp =  __call(args)
+            resp = __call(args)
 
         resp_content = resp.json()
         if 'error' in resp_content:
