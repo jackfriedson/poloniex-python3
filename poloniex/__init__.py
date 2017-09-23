@@ -1,4 +1,4 @@
-from src.Poloniex import API
+from poloniex.Poloniex import API
 PoloniexAPI = API
 
 __author__ = 'Andy Hawkins'
